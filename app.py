@@ -164,8 +164,34 @@ def _find_index_dir(index_dir: str):
     return None
 
 
+def _maybe_download_index_from_drive(index_dir: str):
+    """
+    If the index isn't present locally and a Drive folder URL/ID is set in
+    secrets, download it once (e.g. on Streamlit Cloud, where you don't want
+    to commit a large binary FAISS index to git). No-op if the index is
+    already present, or no Drive source is configured.
+    """
+    if _find_index_dir(index_dir) is not None:
+        return
+
+    drive_url = st.secrets.get("FAISS_INDEX_DRIVE_URL")
+    if not drive_url:
+        return  # nothing configured — fall through to the normal "not found" error
+
+    try:
+        import gdown
+    except ImportError:
+        st.error("`gdown` is not installed but `FAISS_INDEX_DRIVE_URL` is set. Add `gdown` to requirements.txt.")
+        st.stop()
+
+    target = Path(__file__).resolve().parent / "faiss_index"
+    with st.spinner("Downloading knowledge base index from Google Drive (first run only)..."):
+        gdown.download_folder(drive_url, output=str(target), quiet=False, use_cookies=False)
+
+
 @st.cache_resource(show_spinner="Loading knowledge base index...")
 def load_index_and_metadata(index_dir: str):
+    _maybe_download_index_from_drive(index_dir)
     found_dir = _find_index_dir(index_dir)
 
     if found_dir is None:
@@ -393,6 +419,11 @@ if prompt := st.chat_input(placeholder):
             )
             st.markdown(pills, unsafe_allow_html=True)
 
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": answer,
+        "sources": chunks,
+    })
     st.session_state.messages.append({
         "role": "assistant",
         "content": answer,
