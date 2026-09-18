@@ -176,6 +176,10 @@ def _maybe_download_index_from_drive(index_dir: str):
 
     drive_url = st.secrets.get("FAISS_INDEX_DRIVE_URL")
     if not drive_url:
+        st.warning(
+            "No local `faiss_index` found, and `FAISS_INDEX_DRIVE_URL` is not set in secrets — "
+            "skipping auto-download. Add that secret if you want the index pulled from Drive."
+        )
         return  # nothing configured — fall through to the normal "not found" error
 
     try:
@@ -185,8 +189,28 @@ def _maybe_download_index_from_drive(index_dir: str):
         st.stop()
 
     target = Path(__file__).resolve().parent / "faiss_index"
-    with st.spinner("Downloading knowledge base index from Google Drive (first run only)..."):
-        gdown.download_folder(drive_url, output=str(target), quiet=False, use_cookies=False)
+    try:
+        with st.spinner("Downloading knowledge base index from Google Drive (first run only)..."):
+            gdown.download_folder(drive_url, output=str(target), quiet=False, use_cookies=False)
+    except Exception as e:
+        st.error(f"Download from `FAISS_INDEX_DRIVE_URL` failed: {e}")
+        return
+
+    # gdown sometimes nests contents one level deep under the Drive folder's
+    # own name — if index.faiss isn't directly in `target`, look one level down
+    # and flatten it up.
+    if not (target / "index.faiss").exists():
+        nested = list(target.glob("*/index.faiss"))
+        if nested:
+            nested_dir = nested[0].parent
+            for f in nested_dir.iterdir():
+                f.rename(target / f.name)
+        else:
+            downloaded = [str(p.relative_to(target)) for p in target.rglob("*")] if target.exists() else []
+            st.error(
+                "Download completed but `index.faiss` was not found in the expected location. "
+                f"Files found under `{target}`: {downloaded or 'none'}"
+            )
 
 
 @st.cache_resource(show_spinner="Loading knowledge base index...")
